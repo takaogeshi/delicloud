@@ -1,470 +1,563 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Navigation App</title>
-    <style>
-        #map {
-            height: 80vh;
-            width: 100%;
-        }
-        body {
-            margin: 0;
-            padding: 10px;
-            font-family: Arial, sans-serif;
-        }
-        button {
-            padding: 5px 10px;
-            margin: 5px;
-        }
-        input[type="file"] {
-            margin: 5px;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Delicloud Proto</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 10px;
+      font-family: Arial, sans-serif;
+    }
+    #map {
+      height: 100vh;
+      width: 100%;
+    }
+    h1 {
+      font-size: 1.5em;
+      margin-bottom: 10px;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 5px 0;
+      font-size: 1em;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    label {
+      display: block;
+      margin: 5px 0;
+    }
+    input[type="file"] {
+      width: 100%;
+      font-size: 1em;
+    }
+    #kmlFile1, #kmlFile2, #kmlFile3 {
+      display: none;
+    }
+  </style>
+  <script src="https://unpkg.com/@tmcw/togeojson@5.8.1/dist/togeojson.umd.js"></script>
 </head>
 <body>
-    <div id="map"></div>
-    <button id="updateKml">Update KML Files</button>
-    <input type="file" id="kmlFile1" accept=".kml">
-    <input type="file" id="kmlFile2" accept=".kml">
-    <input type="file" id="kmlFile3" accept=".kml">
-    <label for="taskFile">タスクファイルをアップロード:</label>
-    <input type="file" id="taskFile" accept=".kml">
+  <h1>Delicloud 配達ルートプロトタイプ</h1>
+  <button id="updateKml">基地局マップを更新</button>
+  <input type="file" id="kmlFile1" accept=".kml">
+  <input type="file" id="kmlFile2" accept=".kml">
+  <input type="file" id="kmlFile3" accept=".kml">
+  <label>タスク (task.kml):</label>
+  <input type="file" id="taskFile" accept=".kml">
+  <div id="map"></div>
 
-    <script src="https://unpkg.com/@tmcw/togeojson@5.8.1/dist/togeojson.umd.js"></script>
-    <script>
-        let map;
-        let directionsService;
-        let directionsRenderer;
-        let allMarkers = [];
-        let visitedMarkers = new Map();
-        let areaPolygon;
-        let waypoints = [];
-        let currentRouteWaypoints = [];
+  <script>
+    let map;
+    let directionsService;
+    let directionsRenderer;
+    let allMarkers = [];
+    let visitedMarkers = new Map();
+    let areaPolygon;
+    let waypoints = [];
+    let currentRouteWaypoints = [];
 
-        async function loadConfigAndInitialize() {
-            try {
-                const response = await fetch('/config');
-                if (!response.ok) throw new Error('Failed to load config');
-                const config = await response.json();
-                const apiKey = config.API_KEY;
+    async function loadConfigAndInitialize() {
+      try {
+        console.log('Fetching config...');
+        const response = await fetch('/config');
+        if (!response.ok) {
+          console.error('Config fetch failed:', response.status);
+          throw new Error('Failed to load config');
+        }
+        const config = await response.json();
+        const apiKey = config.API_KEY;
+        console.log('API Key loaded:', apiKey ? 'Yes' : 'No');
 
-                if (!apiKey) throw new Error('API_KEY not found in config.txt');
-
-                const script = document.createElement('script');
-                script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=geometry,directions&callback=initMap`;
-                script.async = true;
-                script.defer = true;
-                script.onerror = () => console.error('Failed to load Google Maps API');
-                document.head.appendChild(script);
-            } catch (error) {
-                console.error('Error loading config:', error);
-            }
+        if (!apiKey) {
+          throw new Error('API_KEY not found in config');
         }
 
-        async function initMap() {
-            const { Map } = await google.maps.importLibrary("maps");
-            const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
+        await loadGoogleMapsScript(apiKey);
+        await initMap();
+      } catch (error) {
+        console.error('Initialization error:', error);
+        document.getElementById('map').innerHTML = 'マップの読み込みに失敗しました。ページを更新してください。';
+      }
+    }
 
-            let initialPosition = { lat: 35.6762, lng: 139.6503 };
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                        initialPosition = { lat: position.coords.latitude, lng: position.coords.longitude };
-                        map.setCenter(initialPosition);
-                        console.log('GPS Position:', initialPosition);
-                    },
-                    () => console.log('GPS Error, using default')
-                );
-            }
+    function loadGoogleMapsScript(apiKey) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=geometry,directions&callback=initCallback`;
+        script.async = true;
+        script.defer = true;
+        
+        window.initCallback = () => {
+          console.log('Google Maps API loaded');
+          resolve();
+        };
+        
+        script.onerror = () => {
+          console.error('Failed to load Google Maps API');
+          reject(new Error('Google Maps API load failed'));
+        };
+        
+        document.head.appendChild(script);
+      });
+    }
+  
+    async function initMap() {
+      console.log('Initializing map...');
+      const { Map } = await google.maps.importLibrary("maps");
+      const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
+  
+      let initialPosition = { lat: 35.6762, lng: 139.6503 };
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            initialPosition = { lat: position.coords.latitude, lng: position.coords.longitude };
+            map.setCenter(initialPosition);
+            console.log('GPS Position:', initialPosition);
+          },
+          () => console.log('GPS Error, using default')
+        );
+      }
+  
+      map = new Map(document.getElementById('map'), {
+        center: initialPosition,
+        zoom: 12,
+        mapId: "2661a28fd54ccac9",
+        disableDoubleClickZoom: true
+      });
+      directionsService = new google.maps.DirectionsService();
+      directionsRenderer = new google.maps.DirectionsRenderer({ map: map, suppressMarkers: true });
+      console.log('Map initialized');
+  
+      loadVisitedMarkers();
+      await loadStoredKml();
 
-            map = new Map(document.getElementById('map'), {
-                center: initialPosition,
-                zoom: 12,
-                mapId: "2661a28fd54ccac9",
-                disableDoubleClickZoom: true
-            });
-            directionsService = new google.maps.DirectionsService();
-            directionsRenderer = new google.maps.DirectionsRenderer({ map: map, suppressMarkers: true });
-
-            loadVisitedMarkers();
-            await loadStoredKml();
-        }
-
-        async function createMarker(position, map, title, isTask = false) {
-            const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
-            const key = `${position.lat},${position.lng}`;
-            const isVisited = visitedMarkers.has(key);
-
-            const markerDiv = document.createElement('div');
-            markerDiv.style.cssText = isVisited
-                ? 'background:grey;width:10px;height:10px;border-radius:50%;opacity:0.5;'
-                : isTask
-                    ? 'background:red;width:10px;height:10px;border-radius:50%;'
-                    : 'background:blue;width:10px;height:10px;border-radius:50%;';
-
-            const marker = new AdvancedMarkerElement({
-                position: position,
-                map: map,
-                title: title,
-                content: markerDiv
-            });
-
-            marker.element.addEventListener('dblclick', (e) => {
-                e.stopPropagation();
-                console.log('Marker double-clicked (DOM):', position);
-                const confirmVisited = confirm('訪問済みにしますか？');
-                if (confirmVisited) {
-                    markAsVisited(position, marker);
-                }
-            });
-
-            marker.element.addEventListener('click', () => {
-                console.log('Marker single-clicked (DOM):', position);
-            });
-
-            return marker;
-        }
-
-        async function loadKmlFile(fileInputId, storageKey) {
-            const input = document.getElementById(fileInputId);
-            input.addEventListener('change', async (event) => {
-                const file = event.target.files[0];
-                if (file) {
-                    const reader = new FileReader();
-                    reader.onload = async (e) => {
-                        const kmlText = e.target.result;
-                        localStorage.setItem(storageKey, kmlText);
-                        const kmlDoc = new DOMParser().parseFromString(kmlText, 'text/xml');
-                        const geojson = toGeoJSON.kml(kmlDoc);
-
-                        for (const feature of geojson.features) {
-                            if (feature.geometry.type === 'Point') {
-                                const coords = feature.geometry.coordinates;
-                                const latLng = { lat: coords[1], lng: coords[0] };
-                                const existingMarkerIndex = allMarkers.findIndex(m => isSameLocation(m.position, latLng));
-                                if (existingMarkerIndex === -1) {
-                                    const marker = await createMarker(latLng, map, feature.properties.name || '基地局');
-                                    allMarkers.push({ position: latLng, marker: marker });
-                                } else {
-                                    allMarkers[existingMarkerIndex].marker.title += `, ${feature.properties.name || '基地局'}`;
-                                    console.log(`Duplicate marker merged at: ${latLng.lat}, ${latLng.lng} from ${storageKey}`);
-                                }
-                            }
-                        }
-                        console.log('Loaded KML file:', storageKey, 'with', allMarkers.length, 'unique markers');
-                        input.value = '';
-                    };
-                    reader.readAsText(file);
-                }
-            });
-        }
-
-        async function loadStoredKml() {
-            const keys = ['kml1', 'kml2', 'kml3'];
-            for (const key of keys) {
-                const kmlText = localStorage.getItem(key);
-                if (kmlText) {
-                    const kmlDoc = new DOMParser().parseFromString(kmlText, 'text/xml');
-                    const geojson = toGeoJSON.kml(kmlDoc);
-
-                    for (const feature of geojson.features) {
-                        if (feature.geometry.type === 'Point') {
-                            const coords = feature.geometry.coordinates;
-                            const latLng = { lat: coords[1], lng: coords[0] };
-                            const existingMarkerIndex = allMarkers.findIndex(m => isSameLocation(m.position, latLng));
-                            if (existingMarkerIndex === -1) {
-                                const marker = await createMarker(latLng, map, feature.properties.name || '基地局');
-                                allMarkers.push({ position: latLng, marker: marker });
-                            } else {
-                                allMarkers[existingMarkerIndex].marker.title += `, ${feature.properties.name || '基地局'}`;
-                                console.log(`Duplicate marker merged at: ${latLng.lat}, ${latLng.lng} from stored ${key}`);
-                            }
-                        }
-                    }
-                    console.log('Loaded stored KML:', key, 'with', allMarkers.length, 'unique markers');
-                }
-            }
-        }
-
-        async function markAsVisited(position, marker) {
-            try {
-                const key = `${position.lat},${position.lng}`;
-                visitedMarkers.set(key, true);
-
-                const greyMarkerDiv = document.createElement('div');
-                greyMarkerDiv.style.cssText = 'background:grey;width:10px;height:10px;border-radius:50%;opacity:0.5;';
-                marker.content = greyMarkerDiv;
-
-                saveVisitedMarkers();
-                console.log(`Marked as visited: ${position.lat}, ${position.lng}`);
-                return true;
-            } catch (error) {
-                console.error('Error marking marker as visited:', error);
-                return false;
-            }
-        }
-
-        function saveVisitedMarkers() {
-            const visitedData = Array.from(visitedMarkers.entries());
-            localStorage.setItem('visitedMarkers', JSON.stringify(visitedData));
-        }
-
-        function loadVisitedMarkers() {
-            const savedData = localStorage.getItem('visitedMarkers');
-            if (savedData) {
-                visitedMarkers = new Map(JSON.parse(savedData));
-            }
-        }
-
-        function clearVisitedMarkers() {
-            visitedMarkers.clear();
-            localStorage.removeItem('visitedMarkers');
-
-            allMarkers.forEach(({ position, marker }) => {
-                const isInArea = areaPolygon && google.maps.geometry.poly.containsLocation(
-                    new google.maps.LatLng(position.lat, position.lng), areaPolygon
-                );
-                const initialDiv = document.createElement('div');
-                initialDiv.style.cssText = isInArea
-                    ? 'background:red;width:10px;height:10px;border-radius:50%;'
-                    : 'background:blue;width:10px;height:10px;border-radius:50%;';
-                marker.content = initialDiv;
-            });
-
-            console.log('All visited markers cleared');
-        }
-
-        function isSameLocation(loc1, loc2, epsilon = 0.0002) { // 約20m
-            return Math.abs(loc1.lat - loc2.lat) < epsilon && 
-                   Math.abs(loc1.lng - loc2.lng) < epsilon;
-        }
-
-        async function calculateRoute() {
-            const gpsPos = await new Promise((resolve) => {
-                navigator.geolocation.getCurrentPosition(
-                    (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-                    () => resolve({ lat: 35.6762, lng: 139.6503 })
-                );
-            });
-            console.log('Current GPS Position:', gpsPos);
-
-            const unvisitedRemaining = waypoints.filter(wp => {
-                return ![...visitedMarkers.keys()].some(key => {
-                    const [lat, lng] = key.split(',').map(Number);
-                    return isSameLocation(wp.location, { lat, lng });
-                });
-            });
-            if (unvisitedRemaining.length < 1) {
-                console.log('All reachable waypoints have been visited.');
-                return;
-            }
-
-            let startIndex = 0;
-            let minDistance = Infinity;
-            unvisitedRemaining.forEach((wp, i) => {
-                const dist = google.maps.geometry.spherical.computeDistanceBetween(
-                    new google.maps.LatLng(gpsPos.lat, gpsPos.lng),
-                    new google.maps.LatLng(wp.location.lat, wp.location.lng)
-                );
-                if (dist < minDistance) {
-                    minDistance = dist;
-                    startIndex = i;
-                }
-            });
-            console.log('Nearest Start:', unvisitedRemaining[startIndex].location);
-
-            const orderedWaypoints = [unvisitedRemaining[startIndex]];
-            const remainingCopy = [...unvisitedRemaining];
-            remainingCopy.splice(startIndex, 1);
-            currentRouteWaypoints = [orderedWaypoints[0]];
-
-            while (remainingCopy.length > 0 && orderedWaypoints.length < 10) {
-                const lastPoint = orderedWaypoints[orderedWaypoints.length - 1].location;
-                let minDistance = Infinity;
-                let nearestIndex = -1;
-
-                remainingCopy.forEach((wp, i) => {
-                    const dist = google.maps.geometry.spherical.computeDistanceBetween(
-                        new google.maps.LatLng(lastPoint.lat, lastPoint.lng),
-                        new google.maps.LatLng(wp.location.lat, wp.location.lng)
-                    );
-                    const isDuplicate = orderedWaypoints.some(owp => isSameLocation(owp.location, wp.location));
-                    if (dist < minDistance && !isDuplicate) {
-                        minDistance = dist;
-                        nearestIndex = i;
-                    }
-                });
-
-                if (nearestIndex !== -1) {
-                    const nextPoint = remainingCopy[nearestIndex];
-                    orderedWaypoints.push(nextPoint);
-                    currentRouteWaypoints.push(nextPoint);
-                    remainingCopy.splice(nearestIndex, 1);
-                    console.log(`Added point ${orderedWaypoints.length - 1}, Distance: ${minDistance.toFixed(2)} meters, Location:`, nextPoint.location);
-                } else {
-                    console.warn('No valid next point found.');
-                    break;
-                }
-            }
-
-            console.log('Ordered Waypoints before route:', orderedWaypoints.map((wp, i) => ({ order: i + 1, location: wp.location })));
-            console.log('AI Suggestion: Start at:', orderedWaypoints[0].location);
-            console.log('Goal: End at:', orderedWaypoints[orderedWaypoints.length - 1].location);
-
-            directionsService.route({
-                origin: orderedWaypoints[0].location,
-                destination: orderedWaypoints[orderedWaypoints.length - 1].location,
-                waypoints: orderedWaypoints.slice(1, -1).map(wp => ({ location: wp.location })),
-                optimizeWaypoints: false,
-                travelMode: google.maps.TravelMode.DRIVING,
-                drivingOptions: {
-                    departureTime: new Date(),
-                    trafficModel: google.maps.TrafficModel.BEST_GUESS
-                }
-            }, (result, status) => {
-                if (status === 'OK') {
-                    directionsRenderer.setDirections(result);
-                    console.log('Route Generated with', orderedWaypoints.length, 'points');
-
-                    const legs = result.routes[0].legs;
-                    console.log('Actual Route Order:');
-                    legs.forEach((leg, legIndex) => {
-                        console.log(`Leg ${legIndex + 1}: Start at ${leg.start_location.lat()},${leg.start_location.lng()} -> End at ${leg.end_location.lat()},${leg.end_location.lng()}`);
-                    });
-
-                    orderedWaypoints.forEach((wp, index) => {
-                        const markerDiv = document.createElement('div');
-                        markerDiv.textContent = String(index + 1);
-                        markerDiv.style.cssText = index === 0
-                            ? 'background:green;width:20px;height:20px;border-radius:50%;text-align:center;color:white;'
-                            : index === orderedWaypoints.length - 1
-                                ? 'background:red;width:20px;height:20px;border-radius:50%;text-align:center;color:white;'
-                                : 'background:yellow;width:20px;height:20px;border-radius:50%;text-align:center;';
-                        wp.marker.content = markerDiv;
-                        console.log(`Marker ${index + 1} set at:`, wp.location);
-                    });
-                } else {
-                    console.error('Route Error:', status);
-                }
-            });
-        }
-
-        async function loadTaskFile() {
-            const input = document.getElementById('taskFile');
-            input.addEventListener('change', async (event) => {
-                const file = event.target.files[0];
-                if (!file) return;
-                console.log('Task KML Uploaded');
-
-                const reader = new FileReader();
-                reader.onload = async (e) => {
-                    console.log('Parsing Task KML');
-                    const kmlText = e.target.result;
-                    const kmlDoc = new DOMParser().parseFromString(kmlText, 'text/xml');
-                    const geojson = toGeoJSON.kml(kmlDoc);
-
-                    areaPolygon = null;
-                    waypoints = [];
-                    currentRouteWaypoints = [];
-                    let polygonCoords = [];
-                    geojson.features.forEach((feature) => {
-                        if (feature.geometry.type === 'LineString' || feature.geometry.type === 'Polygon') {
-                            polygonCoords = feature.geometry.coordinates.map(coord => ({ lat: coord[1], lng: coord[0] }));
-                            areaPolygon = new google.maps.Polygon({
-                                paths: polygonCoords,
-                                strokeColor: '#FF0000',
-                                strokeOpacity: 0.8,
-                                strokeWeight: 2,
-                                fillColor: '#FFFF99',
-                                fillOpacity: 0.35,
-                                map: map
-                            });
-                        }
-                    });
-                    console.log('Area Polygon Created with coords:', polygonCoords);
-
-                    allMarkers.forEach(({ position, marker }) => {
-                        const isInArea = areaPolygon && google.maps.geometry.poly.containsLocation(
-                            new google.maps.LatLng(position.lat, position.lng), areaPolygon
-                        );
-                        console.log(`Marker at ${position.lat}, ${position.lng} is ${isInArea ? 'inside' : 'outside'} area`);
-                        if (isInArea) {
-                            const key = `${position.lat},${position.lng}`;
-                            if (!visitedMarkers.has(key)) {
-                                marker.content.style.cssText = 'background:red;width:10px;height:10px;border-radius:50%;';
-                            }
-                            const existingWaypoint = waypoints.find(wp => isSameLocation(wp.location, position));
-                            if (!existingWaypoint) {
-                                waypoints.push({ location: position, marker: marker });
-                            }
-                        }
-                    });
-                    console.log('Found', waypoints.length, 'unique waypoints in area');
-
-                    if (waypoints.length >= 2) {
-                        const nextButton = document.createElement('button');
-                        nextButton.textContent = 'Next 10 Points';
-                        nextButton.style.marginTop = '10px';
-                        document.body.appendChild(nextButton);
-
-                        const clearButton = document.createElement('button');
-                        clearButton.textContent = 'Clear Visited';
-                        clearButton.style.marginTop = '10px';
-                        clearButton.style.marginLeft = '10px';
-                        document.body.appendChild(clearButton);
-
-                        const routeButton = document.createElement('button');
-                        routeButton.textContent = 'ルート探索';
-                        routeButton.style.marginTop = '10px';
-                        routeButton.style.marginLeft = '10px';
-                        document.body.appendChild(routeButton);
-
-                        const markVisitedAndCalculateNext = () => {
-                            if (currentRouteWaypoints.length > 0) {
-                                currentRouteWaypoints.forEach((wp, index) => {
-                                    visitedMarkers.set(`${wp.location.lat},${wp.location.lng}`, true);
-                                    const greyMarkerDiv = document.createElement('div');
-                                    greyMarkerDiv.style.cssText = 'background:grey;width:10px;height:10px;border-radius:50%;opacity:0.5;';
-                                    wp.marker.content = greyMarkerDiv;
-                                    console.log(`Marker ${index + 1} removed and greyed at:`, wp.location);
-                                });
-                                saveVisitedMarkers();
-                                directionsRenderer.setDirections({ routes: [] });
-                                map.panTo(currentRouteWaypoints[0].location);
-                                calculateRoute();
-                            }
-                        };
-
-                        nextButton.addEventListener('click', markVisitedAndCalculateNext);
-                        clearButton.addEventListener('click', clearVisitedMarkers);
-                        routeButton.addEventListener('click', calculateRoute);
-                    } else {
-                        console.error('Not enough waypoints:', waypoints.length);
-                    }
-                };
-                reader.readAsText(file);
-            });
-        }
-
-        // イベントリスナーをグローバルに設定
-        loadKmlFile('kmlFile1', 'kml1');
-        loadKmlFile('kmlFile2', 'kml2');
-        loadKmlFile('kmlFile3', 'kml3');
-        loadTaskFile();
-
-        window.addEventListener('load', () => {
-            document.getElementById('updateKml').addEventListener('click', () => {
-                allMarkers = [];
-                const inputs = ['kmlFile1', 'kmlFile2', 'kmlFile3'];
-                inputs.forEach(id => {
-                    document.getElementById(id).click();
-                });
-                console.log('KML update triggered');
-            });
-            loadConfigAndInitialize();
+      document.getElementById('updateKml').addEventListener('click', () => {
+        allMarkers = [];
+        const inputs = ['kmlFile1', 'kmlFile2', 'kmlFile3'];
+        inputs.forEach(id => {
+          loadKmlFile(id, id.replace('kmlFile', 'kml'));
         });
-    </script>
+        console.log('KML update triggered');
+      });
+      loadTaskFile();
+    }
+  
+    async function createMarker(position, map, title, isTask = false) {
+      try {
+        const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
+        const key = `${position.lat},${position.lng}`;
+        const isVisited = visitedMarkers.has(key);
+  
+        const markerDiv = document.createElement('div');
+        markerDiv.style.cssText = isVisited
+          ? 'background:grey;width:30px;height:30px;border-radius:50%;opacity:0.5;'
+          : isTask
+            ? 'background:red;width:30px;height:30px;border-radius:50%;opacity:0.5;'
+            : 'background:blue;width:30px;height:30px;border-radius:50%;opacity:0.5;';
+  
+        const marker = new AdvancedMarkerElement({
+          position: position,
+          map: map,
+          title: title,
+          content: markerDiv
+        });
+  
+        marker.element.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          console.log('Marker double-clicked (DOM):', position);
+          const confirmVisited = confirm('訪問済みにしますか？');
+          if (confirmVisited) {
+            markAsVisited(position, marker);
+          }
+        });
+  
+        marker.element.addEventListener('click', () => {
+          console.log('Marker single-clicked (DOM):', position);
+        });
+  
+        return marker;
+      } catch (error) {
+        console.error('Error creating marker:', error);
+        return null;
+      }
+    }
+  
+    async function loadKmlFile(fileInputId, storageKey) {
+      try {
+        const input = document.getElementById(fileInputId);
+        if (!input) {
+          console.error(`Input element ${fileInputId} not found`);
+          return;
+        }
+
+        input.addEventListener('change', async (event) => {
+          const file = event.target.files[0];
+          if (!file) {
+            console.log('No file selected');
+            return;
+          }
+
+          try {
+            const kmlText = await readFileAsText(file);
+            localStorage.setItem(storageKey, kmlText);
+            
+            const kmlDoc = new DOMParser().parseFromString(kmlText, 'text/xml');
+            if (kmlDoc.getElementsByTagName('parsererror').length > 0) {
+              throw new Error('Invalid KML format');
+            }
+            
+            const geojson = toGeoJSON.kml(kmlDoc);
+            await processKmlFeatures(geojson.features);
+            
+            console.log(`Successfully loaded KML file: ${storageKey}, Markers: ${allMarkers.length}`);
+            input.value = '';
+          } catch (error) {
+            console.error('Error processing KML file:', error);
+            alert('KMLファイルの処理中にエラーが発生しました。');
+          }
+        });
+      } catch (error) {
+        console.error('Error in loadKmlFile:', error);
+      }
+    }
+
+    function readFileAsText(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = (e) => reject(new Error('File read failed'));
+        reader.readAsText(file);
+      });
+    }
+
+    async function processKmlFeatures(features) {
+      for (const feature of features) {
+        if (feature.geometry.type === 'Point') {
+          const coords = feature.geometry.coordinates;
+          const latLng = { lat: coords[1], lng: coords[0] };
+          const existingMarkerIndex = allMarkers.findIndex(m => isSameLocation(m.position, latLng));
+          if (existingMarkerIndex === -1) {
+            const marker = await createMarker(latLng, map, feature.properties.name || '基地局');
+            if (marker) {
+              allMarkers.push({ position: latLng, marker: marker });
+            }
+          } else {
+            allMarkers[existingMarkerIndex].marker.title += `, ${feature.properties.name || '基地局'}`;
+            console.log('Duplicate marker merged at:', latLng);
+          }
+        }
+      }
+    }
+  
+    async function loadStoredKml() {
+      const keys = ['kml1', 'kml2', 'kml3'];
+      for (const key of keys) {
+        const kmlText = localStorage.getItem(key);
+        if (kmlText) {
+          try {
+            const kmlDoc = new DOMParser().parseFromString(kmlText, 'text/xml');
+            if (kmlDoc.getElementsByTagName('parsererror').length > 0) {
+              console.error(`Invalid KML format in stored ${key}`);
+              continue;
+            }
+            const geojson = toGeoJSON.kml(kmlDoc);
+            await processKmlFeatures(geojson.features);
+            console.log('Loaded stored KML:', key, 'with', allMarkers.length, 'unique markers');
+          } catch (error) {
+            console.error('Error loading stored KML:', error);
+          }
+        }
+      }
+    }
+  
+    async function markAsVisited(position, marker) {
+      try {
+        const key = `${position.lat},${position.lng}`;
+        visitedMarkers.set(key, true);
+  
+        const greyMarkerDiv = document.createElement('div');
+        greyMarkerDiv.style.cssText = 'background:grey;width:30px;height:30px;border-radius:50%;opacity:0.5;';
+        marker.content = greyMarkerDiv;
+  
+        saveVisitedMarkers();
+        console.log(`Marked as visited: ${position.lat}, ${position.lng}`);
+        return true;
+      } catch (error) {
+        console.error('Error marking marker as visited:', error);
+        return false;
+      }
+    }
+  
+    function saveVisitedMarkers() {
+      const visitedData = Array.from(visitedMarkers.entries());
+      localStorage.setItem('visitedMarkers', JSON.stringify(visitedData));
+    }
+  
+    function loadVisitedMarkers() {
+      const savedData = localStorage.getItem('visitedMarkers');
+      if (savedData) {
+        visitedMarkers = new Map(JSON.parse(savedData));
+      }
+    }
+  
+    function clearVisitedMarkers() {
+      visitedMarkers.clear();
+      localStorage.removeItem('visitedMarkers');
+  
+      allMarkers.forEach(({ position, marker }) => {
+        const isInArea = areaPolygon && google.maps.geometry.poly.containsLocation(
+          new google.maps.LatLng(position.lat, position.lng), areaPolygon
+        );
+        const initialDiv = document.createElement('div');
+        initialDiv.style.cssText = isInArea
+          ? 'background:red;width:30px;height:30px;border-radius:50%;opacity:0.5;'
+          : 'background:blue;width:30px;height:30px;border-radius:50%;opacity:0.5;';
+        marker.content = initialDiv;
+      });
+  
+      console.log('All visited markers cleared');
+    }
+  
+    function isSameLocation(loc1, loc2, epsilon = 0.0002) {
+      return Math.abs(loc1.lat - loc2.lat) < epsilon && 
+             Math.abs(loc1.lng - loc2.lng) < epsilon;
+    }
+  
+    async function calculateRoute() {
+      const gpsPos = await new Promise((resolve) => {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+          () => resolve({ lat: 35.6762, lng: 139.6503 })
+        );
+      });
+      console.log('Current GPS Position:', gpsPos);
+  
+      const unvisitedRemaining = waypoints.filter(wp => {
+        return ![...visitedMarkers.keys()].some(key => {
+          const [lat, lng] = key.split(',').map(Number);
+          return isSameLocation(wp.location, { lat, lng });
+        });
+      });
+      if (unvisitedRemaining.length < 1) {
+        console.log('All reachable waypoints have been visited.');
+        return;
+      }
+  
+      let startIndex = 0;
+      let minDistance = Infinity;
+      unvisitedRemaining.forEach((wp, i) => {
+        const dist = google.maps.geometry.spherical.computeDistanceBetween(
+          new google.maps.LatLng(gpsPos.lat, gpsPos.lng),
+          new google.maps.LatLng(wp.location.lat, wp.location.lng)
+        );
+        if (dist < minDistance) {
+          minDistance = dist;
+          startIndex = i;
+        }
+      });
+      console.log('Nearest Start:', unvisitedRemaining[startIndex].location);
+  
+      const orderedWaypoints = [unvisitedRemaining[startIndex]];
+      const remainingCopy = [...unvisitedRemaining];
+      remainingCopy.splice(startIndex, 1);
+      currentRouteWaypoints = [orderedWaypoints[0]];
+  
+      while (remainingCopy.length > 0 && orderedWaypoints.length < 10) {
+        const lastPoint = orderedWaypoints[orderedWaypoints.length - 1].location;
+        let minDistance = Infinity;
+        let nearestIndex = -1;
+  
+        remainingCopy.forEach((wp, i) => {
+          const dist = google.maps.geometry.spherical.computeDistanceBetween(
+            new google.maps.LatLng(lastPoint.lat, lastPoint.lng),
+            new google.maps.LatLng(wp.location.lat, wp.location.lng)
+          );
+          const isDuplicate = orderedWaypoints.some(owp => isSameLocation(owp.location, wp.location));
+          if (dist < minDistance && !isDuplicate) {
+            minDistance = dist;
+            nearestIndex = i;
+          }
+        });
+  
+        if (nearestIndex !== -1) {
+          const nextPoint = remainingCopy[nearestIndex];
+          orderedWaypoints.push(nextPoint);
+          currentRouteWaypoints.push(nextPoint);
+          remainingCopy.splice(nearestIndex, 1);
+          console.log(`Added point ${orderedWaypoints.length - 1}, Distance: ${minDistance.toFixed(2)} meters, Location:`, nextPoint.location);
+        } else {
+          console.warn('No valid next point found.');
+          break;
+        }
+      }
+  
+      console.log('Ordered Waypoints before route:', orderedWaypoints.map((wp, i) => ({ order: i + 1, location: wp.location })));
+      console.log('AI Suggestion: Start at:', orderedWaypoints[0].location);
+      console.log('Goal: End at:', orderedWaypoints[orderedWaypoints.length - 1].location);
+  
+      directionsService.route({
+        origin: orderedWaypoints[0].location,
+        destination: orderedWaypoints[orderedWaypoints.length - 1].location,
+        waypoints: orderedWaypoints.slice(1, -1).map(wp => ({ location: wp.location })),
+        optimizeWaypoints: false,
+        travelMode: google.maps.TravelMode.DRIVING,
+        drivingOptions: {
+          departureTime: new Date(),
+          trafficModel: google.maps.TrafficModel.BEST_GUESS
+        }
+      }, (result, status) => {
+        if (status === 'OK') {
+          directionsRenderer.setDirections(result);
+          console.log('Route Generated with', orderedWaypoints.length, 'points');
+  
+          const legs = result.routes[0].legs;
+          console.log('Actual Route Order:');
+          legs.forEach((leg, legIndex) => {
+            console.log(`Leg ${legIndex + 1}: Start at ${leg.start_location.lat()},${leg.start_location.lng()} -> End at ${leg.end_location.lat()},${leg.end_location.lng()}`);
+          });
+  
+          orderedWaypoints.forEach((wp, index) => {
+            const markerDiv = document.createElement('div');
+            markerDiv.textContent = String(index + 1);
+            markerDiv.style.cssText = index === 0
+              ? 'background:green;width:20px;height:20px;border-radius:50%;text-align:center;color:white;'
+              : index === orderedWaypoints.length - 1
+                ? 'background:red;width:20px;height:20px;border-radius:50%;text-align:center;color:white;'
+                : 'background:yellow;width:20px;height:20px;border-radius:50%;text-align:center;border:1px solid black;';
+            wp.marker.content = markerDiv;
+            console.log(`Marker ${index + 1} set at:`, wp.location);
+          });
+        } else {
+          console.error('Route Error:', status);
+        }
+      });
+    }
+  
+    async function loadTaskFile() {
+      try {
+        const input = document.getElementById('taskFile');
+        if (!input) {
+          console.error('Task file input not found');
+          return;
+        }
+        
+        input.addEventListener('change', async (event) => {
+          const file = event.target.files[0];
+          if (!file) {
+            console.log('No task file selected');
+            return;
+          }
+          
+          console.log('Task KML Uploaded');
+          try {
+            const kmlText = await readFileAsText(file);
+            const kmlDoc = new DOMParser().parseFromString(kmlText, 'text/xml');
+            if (kmlDoc.getElementsByTagName('parsererror').length > 0) {
+              throw new Error('Invalid task KML format');
+            }
+            
+            console.log('Parsing Task KML');
+            const geojson = toGeoJSON.kml(kmlDoc);
+  
+            areaPolygon = null;
+            waypoints = [];
+            currentRouteWaypoints = [];
+            geojson.features.forEach((feature) => {
+              if (feature.geometry.type === 'LineString' || feature.geometry.type === 'Polygon') {
+                areaPolygon = new google.maps.Polygon({
+                  paths: feature.geometry.coordinates.map(coord => ({ lat: coord[1], lng: coord[0] })),
+                  strokeColor: '#FF0000',
+                  strokeOpacity: 0.8,
+                  strokeWeight: 2,
+                  fillColor: '#FFFF99',
+                  fillOpacity: 0.35,
+                  map: map
+                });
+              }
+              if (feature.geometry.type === 'Point') {
+                const coords = feature.geometry.coordinates;
+                const latLng = { lat: coords[1], lng: coords[0] };
+                const existingMarkerIndex = allMarkers.findIndex(m => isSameLocation(m.position, latLng));
+                if (existingMarkerIndex === -1) {
+                  const marker = await createMarker(latLng, map, feature.properties.name || 'タスク', true);
+                  if (marker) {
+                    allMarkers.push({ position: latLng, marker: marker });
+                  }
+                }
+              }
+            });
+            console.log('Area Polygon Created');
+  
+            allMarkers.forEach(({ position, marker }) => {
+              if (areaPolygon && google.maps.geometry.poly.containsLocation(
+                new google.maps.LatLng(position.lat, position.lng), areaPolygon)) {
+                const key = `${position.lat},${position.lng}`;
+                if (!visitedMarkers.has(key)) {
+                  marker.content.style.cssText = 'background:red;width:30px;height:30px;border-radius:50%;opacity:0.5;';
+                }
+                const existingWaypoint = waypoints.find(wp => isSameLocation(wp.location, position));
+                if (!existingWaypoint) {
+                  waypoints.push({ location: position, marker: marker });
+                }
+              }
+            });
+            console.log('Found', waypoints.length, 'unique waypoints in area');
+  
+            if (waypoints.length >= 2) {
+              const nextButton = document.createElement('button');
+              nextButton.textContent = 'Next 10 Points';
+              nextButton.style.marginTop = '10px';
+              document.body.appendChild(nextButton);
+  
+              const clearButton = document.createElement('button');
+              clearButton.textContent = 'Clear Visited';
+              clearButton.style.marginTop = '10px';
+              clearButton.style.marginLeft = '10px';
+              document.body.appendChild(clearButton);
+  
+              const routeButton = document.createElement('button');
+              routeButton.textContent = 'ルート探索';
+              routeButton.style.marginTop = '10px';
+              routeButton.style.marginLeft = '10px';
+              document.body.appendChild(routeButton);
+  
+              const markVisitedAndCalculateNext = () => {
+                if (currentRouteWaypoints.length > 0) {
+                  currentRouteWaypoints.forEach((wp, index) => {
+                    visitedMarkers.set(`${wp.location.lat},${wp.location.lng}`, true);
+                    const greyMarkerDiv = document.createElement('div');
+                    greyMarkerDiv.style.cssText = 'background:grey;width:30px;height:30px;border-radius:50%;opacity:0.5;';
+                    wp.marker.content = greyMarkerDiv;
+                    console.log(`Marker ${index + 1} removed and greyed at:`, wp.location);
+                  });
+                  saveVisitedMarkers();
+                  directionsRenderer.setDirections({ routes: [] });
+                  map.panTo(currentRouteWaypoints[0].location);
+                  calculateRoute();
+                }
+              };
+  
+              nextButton.addEventListener('click', markVisitedAndCalculateNext);
+              clearButton.addEventListener('click', clearVisitedMarkers);
+              routeButton.addEventListener('click', calculateRoute);
+            } else {
+              console.error('Not enough waypoints:', waypoints.length);
+            }
+          } catch (error) {
+            console.error('Error processing task KML:', error);
+            alert('タスクKMLの処理中にエラーが発生しました。');
+          }
+        });
+      } catch (error) {
+        console.error('Error in loadTaskFile:', error);
+      }
+    }
+
+    // 初期化実行
+    loadConfigAndInitialize();
+  </script>
 </body>
 </html>
